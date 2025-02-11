@@ -7,6 +7,7 @@ import torch.nn.functional as functional
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from tqdm import tqdm
 
 # Data transformation
 transform = transforms.Compose([
@@ -61,26 +62,23 @@ torch.manual_seed(seed)
 
 # Loss and optimizer
 criterion = nn.CrossEntropyLoss()
+learning_rate = 0.01
 optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+epochs = 100
 
-# Set up directories for saving outputs
-i = 4
-base_dir = None
-while True:
-    if not os.path.isdir(f'run{i}'):
-        os.mkdir(f"run{i}")
-        base_dir = f"run{i}"
-        break
-    else:
-        i += 1
+accuracy = []
+
+base_dir = os.path.join("runs", f"alex_seed{seed}_batch{batch_size}_sgd_lr{learning_rate}_epochs{epochs}")
+
+os.makedirs(base_dir, exist_ok=True)
 
 eigenvector_dir = os.path.join(base_dir, 'eigenvectors')
 bias_dir = os.path.join(base_dir, 'biases')
 spectrum_dir = os.path.join(base_dir, 'spectrum')
 
-os.mkdir(eigenvector_dir)
-os.mkdir(bias_dir)
-os.mkdir(spectrum_dir)
+os.makedirs(eigenvector_dir, exist_ok=True)
+os.makedirs(bias_dir, exist_ok=True)
+os.makedirs(spectrum_dir, exist_ok=True)
 
 # Device configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,10 +86,15 @@ print(f"Utilizing {str(device)}")
 model.to(device)
 
 # Training loop
-for epoch in range(100):
+for epoch in range(epochs):
+    correct = 0.0
+    total = 0.0
+
     model.train()
     total_loss = 0.0
-    for i, data in enumerate(trainloader, 0):
+
+    train_pbar = tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs} [Training]")
+    for i, data in enumerate(train_pbar):
         inputs, labels = data
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
@@ -122,9 +125,32 @@ for epoch in range(100):
                 with open(os.path.join(eigenvector_dir, f'fc{layer_index}.csv'), 'a') as f:
                     np.savetxt(f, leading_eigenvector.reshape(1, -1))
                 layer_index += 1
+        
+        test_pbar = tqdm(testloader, desc=f"Epoch {epoch+1}/{epochs} [Testing]")
+        for testdata in test_pbar: #accuracy on test set
+            images, testlabels = testdata
+            images = images.to(device)
+            testlabels = functional.one_hot(testlabels,num_classes=10).float().to(device)
+            predictions = model(images)
+            _, predicted_labels = torch.max(predictions.data, 1)
+            total += testlabels.size(0)
+            correct += (predicted_labels == testlabels.argmax(dim=1)).sum().item()
+
+        acc = correct / total
+        accuracy.append(acc)
     
-    print(f'epoch {epoch + 1} finished')
+    print(f'epoch {epoch + 1} finished, test accuracy: {acc:.4f}')
     if total_loss < 0.0001:
         break
+
+acc_array = np.array(accuracy)
+np.savetxt(os.path.join(base_dir, "accuracy.csv"), acc_array)
+fig, ax = plt.subplots()
+ax.plot(acc_array)
+ax.set_xlabel('Epochs')
+ax.set_ylabel('Accuracy')
+ax.set_title('Accuracies across epochs')
+fig.savefig(os.path.join(base_dir, 'accuracy.png'))
+plt.close(fig)
 
 print('Finished training')
