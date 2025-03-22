@@ -8,15 +8,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from tqdm import tqdm
+import shutil  # <-- Import shutil for deleting directories
+
 
 # Data transformation
 transform = transforms.Compose([
-    transforms.Resize(28),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
 ])
 
-batch_size = 8
+
+
+batch_size = 64
 
 # CIFAR-10 Dataset
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
@@ -57,18 +60,27 @@ class miniAlexNet(nn.Module):
 model = miniAlexNet()
 
 # Set seed for reproducibility
-seed = 100
+seed = 200
 torch.manual_seed(seed)
 
 # Loss and optimizer
 criterion = nn.CrossEntropyLoss()
-learning_rate = 0.01
-optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+learning_rate = 0.0001
+#optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), eps=1e-8)
+
 epochs = 100
 
 accuracy = []
 
-base_dir = os.path.join("runs", f"alex_seed{seed}_batch{batch_size}_sgd_lr{learning_rate}_epochs{epochs}")
+base_dir = os.path.join("runs", f"alex_seed{seed}_batch{batch_size}_adam_lr{learning_rate}_epochs{epochs}")
+
+# --- NEW CODE: Delete existing base_dir if it exists ---
+if os.path.exists(base_dir):
+    print(f"Directory '{base_dir}' already exists. Removing it...")
+    shutil.rmtree(base_dir)
+os.makedirs(base_dir, exist_ok=True)
+# -------------------------------------------------------
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -93,7 +105,7 @@ for epoch in range(epochs):
     model.train()
     total_loss = 0.0
 
-    train_pbar = tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs} [Training]")
+    train_pbar = tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs} [Training]", leave=True)
     for i, data in enumerate(train_pbar):
         inputs, labels = data
         inputs, labels = inputs.to(device), labels.to(device)
@@ -103,6 +115,8 @@ for epoch in range(epochs):
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
+        avg_loss = total_loss / (i + 1)  # 평균 loss 계산
+        train_pbar.set_postfix(loss=f"{avg_loss:.4f}")
     
     model.eval()
     with torch.no_grad():
@@ -120,10 +134,14 @@ for epoch in range(epochs):
         for layer in model.classifier:
             if isinstance(layer, nn.Linear):
                 weight = layer.weight.detach().cpu().numpy()
+                bias = layer.bias.detach().cpu().numpy()
                 u, s, vh = np.linalg.svd(weight)
                 leading_eigenvector = vh[0, :]
                 with open(os.path.join(eigenvector_dir, f'fc{layer_index}.csv'), 'a') as f:
                     np.savetxt(f, leading_eigenvector.reshape(1, -1))
+                # Bias 저장
+                with open(os.path.join(bias_dir, f'fc{layer_index}_bias.csv'), 'a') as f:
+                    np.savetxt(f, bias.reshape(1, -1))
                 layer_index += 1
         
         test_pbar = tqdm(testloader, desc=f"Epoch {epoch+1}/{epochs} [Testing]")
@@ -154,3 +172,47 @@ fig.savefig(os.path.join(base_dir, 'accuracy.png'))
 plt.close(fig)
 
 print('Finished training')
+
+
+from sklearn.decomposition import PCA
+
+# PCA를 통한 bias 변화 분석
+pca_results = {}
+
+for file in sorted(os.listdir(bias_dir)):  # conv, fc 레이어 순서대로 정렬하여 처리
+    file_path = os.path.join(bias_dir, file)
+    bias_data = np.loadtxt(file_path, delimiter=' ')
+
+    if len(bias_data.shape) == 1:  # 1차원 배열일 경우 (에폭 1개일 경우)
+        bias_data = bias_data.reshape(1, -1)
+
+    # PCA 수행 (1차원 축소)
+    pca = PCA(n_components=1)
+    pca.fit(bias_data)  # 전체 데이터로 PCA 학습
+
+    # 첫 번째 주성분이 전체 분산을 얼마나 설명하는지 확인
+    explained_variance_ratio = pca.explained_variance_ratio_[0]
+
+    # 각 epoch마다 첫 번째 주성분(PC1) 방향으로 투영된 크기 저장
+    principal_components = np.abs(pca.transform(bias_data)).flatten()
+    
+    # 첫 번째 주성분(PC1)의 크기 저장
+    pca_results[file] = (explained_variance_ratio, principal_components)
+
+# 그래프 그리기
+fig, ax = plt.subplots(figsize=(10, 5))
+for layer, (variance_ratio, pc_values) in pca_results.items():
+    layer_name = layer.split('.')[0]  # 확장자 제거
+    ax.plot(pc_values, label=f"{layer_name} (Var: {variance_ratio:.2f})")  # 레전드에 variance 추가
+
+ax.set_xlabel('Epochs')
+ax.set_ylabel('PC1 Magnitude')
+ax.set_title('Bias PCA First Principal Component Magnitude Over Epochs')
+ax.legend()
+plt.grid()
+plt.savefig(os.path.join(base_dir, 'bias_pca_analysis.png'))
+plt.show()
+
+
+
+############################ fit s2 ############################
