@@ -63,8 +63,6 @@ Below is a brief explanation of each major script.
   2. Train for `epochs`, logging training loss and test accuracy.
   3. After each epoch, perform SVD on the weights of each layer, save the first (leading) eigenvector, and also save each linear layer’s bias.
   4. Plot overall accuracy (`accuracy.csv` -> `accuracy.png`).
-  5. Perform PCA on biases across epochs and save the figure (`bias_pca_analysis.png`).
-  6. (If enabled) do rank-k factorization at certain epochs and record the normalized reconstruction accuracy.
 - **Usage**:
   ```bash
   python minialexnet_finished.py
