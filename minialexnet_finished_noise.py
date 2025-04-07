@@ -20,7 +20,7 @@ transform = transforms.Compose([
 
 
 batch_size = 64
-noise_ratio = 0.5  # Set noise level (match the one used when generating noisy labels)
+noise_ratio = 1  # Set noise level (match the one used when generating noisy labels)
 noise_seed = 5
 save_path = f"./data/noisy_labels{int(noise_ratio * 100)}_seed{noise_seed}.npy"
 
