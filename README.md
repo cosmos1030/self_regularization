@@ -2,10 +2,9 @@
 
 This repository contains a set of scripts for **CIFAR-10** training and analysis using a custom **miniAlexNet** model. Key features include:
 
-- **Training** miniAlexNet with various optimizers (SGD, Adam) on CIFAR-10.
+- **Training** miniAlexNet with various optimizers (SGD, Adam) and various hyperparameters on CIFAR-10.
 - **Injecting noisy labels** for experiments (configurable noise ratio and random seeds).
 - **Extracting leading eigenvectors** from convolution and linear layers every epoch.
-- **Bias analysis** using PCA.
 - **Rank-k approximation experiments** on linear layers.
 - **Riemannian optimization** with **Geoopt** and **Geomstats** for **Geodesic PCA** (GPCA).
 - **Multi-seed experiments** to gather distributions of results (fitting scores, RSS, etc.).
