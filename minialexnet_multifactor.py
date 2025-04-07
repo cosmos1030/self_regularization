@@ -163,7 +163,7 @@ for epoch in range(epochs):
         avg_loss = total_loss / (i + 1)
         train_pbar.set_postfix(loss=f"{avg_loss:.4f}")
 
-    # --- Save eigenvector and bias info (기존 코드 그대로) ---
+    # --- Save eigenvector and bias info ---
     model.eval()
     with torch.no_grad():
         layer_index = 1
@@ -221,7 +221,7 @@ for epoch in range(epochs):
             # Restore original weights before next k
             restore_linear_weights(model, saved_linear_weights)
         recon_acc_list = np.array(recon_acc_list)
-        # Normalize: k=1000 reconstruction accuracy를 1로 설정
+        # Normalize: Set k=1000 reconstruction accuracy as 1 
         baseline = recon_acc_list[-1]
         if baseline > 0:
             norm_recon_acc = recon_acc_list / baseline
@@ -244,39 +244,11 @@ plt.close(fig)
 
 print('Finished training')
 
-# --- Bias PCA analysis (기존 코드 그대로) ---
-from sklearn.decomposition import PCA
-
-pca_results = {}
-
-for file in sorted(os.listdir(bias_dir)):
-    file_path = os.path.join(bias_dir, file)
-    bias_data = np.loadtxt(file_path, delimiter=' ')
-    if len(bias_data.shape) == 1:
-        bias_data = bias_data.reshape(1, -1)
-    pca = PCA(n_components=1)
-    pca.fit(bias_data)
-    explained_variance_ratio = pca.explained_variance_ratio_[0]
-    principal_components = np.abs(pca.transform(bias_data)).flatten()
-    pca_results[file] = (explained_variance_ratio, principal_components)
-
-fig, ax = plt.subplots(figsize=(10, 5))
-for layer, (variance_ratio, pc_values) in pca_results.items():
-    layer_name = layer.split('.')[0]
-    ax.plot(pc_values, label=f"{layer_name} (Var: {variance_ratio:.2f})")
-ax.set_xlabel('Epochs')
-ax.set_ylabel('PC1 Magnitude')
-ax.set_title('Bias PCA First Principal Component Magnitude Over Epochs')
-ax.legend()
-plt.grid()
-plt.savefig(os.path.join(base_dir, 'bias_pca_analysis.png'))
-plt.show()
-
 # --- Overlay normalized reconstruction accuracy curves ---
 fig, ax = plt.subplots(figsize=(10, 6))
 for ep in recon_epochs:
     # ep here is actual epoch number (e.g. 0, 25, 50, 75, 100)
-    # 파일은 저장 시에 epoch+1로 저장되었음 (예: "recon_acc_norm_epoch1.csv" for epoch 0)
+    # files saved as epoch+1 (e.g: "recon_acc_norm_epoch1.csv" for epoch 0)
     recon_norm_csv = os.path.join(base_dir, f"recon_acc_norm_epoch{ep}.csv")
     if os.path.exists(recon_norm_csv):
         norm_acc = np.loadtxt(recon_norm_csv)

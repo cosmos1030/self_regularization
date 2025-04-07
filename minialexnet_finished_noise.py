@@ -182,46 +182,4 @@ plt.close(fig)
 
 print('Finished training')
 
-
-from sklearn.decomposition import PCA
-
-# PCA를 통한 bias 변화 분석
-pca_results = {}
-
-for file in sorted(os.listdir(bias_dir)):  # conv, fc 레이어 순서대로 정렬하여 처리
-    file_path = os.path.join(bias_dir, file)
-    bias_data = np.loadtxt(file_path, delimiter=' ')
-
-    if len(bias_data.shape) == 1:  # 1차원 배열일 경우 (에폭 1개일 경우)
-        bias_data = bias_data.reshape(1, -1)
-
-    # PCA 수행 (1차원 축소)
-    pca = PCA(n_components=1)
-    pca.fit(bias_data)  # 전체 데이터로 PCA 학습
-
-    # 첫 번째 주성분이 전체 분산을 얼마나 설명하는지 확인
-    explained_variance_ratio = pca.explained_variance_ratio_[0]
-
-    # 각 epoch마다 첫 번째 주성분(PC1) 방향으로 투영된 크기 저장
-    principal_components = np.abs(pca.transform(bias_data)).flatten()
-    
-    # 첫 번째 주성분(PC1)의 크기 저장
-    pca_results[file] = (explained_variance_ratio, principal_components)
-
-# 그래프 그리기
-fig, ax = plt.subplots(figsize=(10, 5))
-for layer, (variance_ratio, pc_values) in pca_results.items():
-    layer_name = layer.split('.')[0]  # 확장자 제거
-    ax.plot(pc_values, label=f"{layer_name} (Var: {variance_ratio:.2f})")  # 레전드에 variance 추가
-
-ax.set_xlabel('Epochs')
-ax.set_ylabel('PC1 Magnitude')
-ax.set_title('Bias PCA First Principal Component Magnitude Over Epochs')
-ax.legend()
-plt.grid()
-plt.savefig(os.path.join(base_dir, 'bias_pca_analysis.png'))
-plt.show()
-
-
-
 ############################ fit s2 ############################

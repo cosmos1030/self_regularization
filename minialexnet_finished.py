@@ -173,41 +173,4 @@ plt.close(fig)
 print('Finished training')
 
 
-from sklearn.decomposition import PCA
-
-pca_results = {}
-
-for file in sorted(os.listdir(bias_dir)):
-    file_path = os.path.join(bias_dir, file)
-    bias_data = np.loadtxt(file_path, delimiter=' ')
-
-    if len(bias_data.shape) == 1:
-        bias_data = bias_data.reshape(1, -1)
-
-    # PCA
-    pca = PCA(n_components=1)
-    pca.fit(bias_data) 
-
-    explained_variance_ratio = pca.explained_variance_ratio_[0]
-
-    principal_components = np.abs(pca.transform(bias_data)).flatten()
-    
-    pca_results[file] = (explained_variance_ratio, principal_components)
-
-# draw graph
-fig, ax = plt.subplots(figsize=(10, 5))
-for layer, (variance_ratio, pc_values) in pca_results.items():
-    layer_name = layer.split('.')[0]
-    ax.plot(pc_values, label=f"{layer_name} (Var: {variance_ratio:.2f})")
-
-ax.set_xlabel('Epochs')
-ax.set_ylabel('PC1 Magnitude')
-ax.set_title('Bias PCA First Principal Component Magnitude Over Epochs')
-ax.legend()
-plt.grid()
-plt.savefig(os.path.join(base_dir, 'bias_pca_analysis.png'))
-plt.show()
-
-
-
 ############################ fit s2 ############################

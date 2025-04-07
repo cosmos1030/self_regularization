@@ -43,4 +43,4 @@ for fc_file in fc_files:
         plt.savefig(save_path)
         plt.close()
 
-print(f"모든 박스플롯이 '{save_dir}' 폴더에 저장되었습니다.")
+print(f"Every boxplot has been created and saved in '{save_dir}'.")
