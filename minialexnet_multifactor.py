@@ -247,8 +247,7 @@ print('Finished training')
 # --- Overlay normalized reconstruction accuracy curves ---
 fig, ax = plt.subplots(figsize=(10, 6))
 for ep in recon_epochs:
-    # ep here is actual epoch number (e.g. 0, 25, 50, 75, 100)
-    # files saved as epoch+1 (e.g: "recon_acc_norm_epoch1.csv" for epoch 0)
+    # 파일 이름은 에폭 번호에 맞게 저장되어 있음 (예: "recon_acc_norm_epoch25.csv" 등)
     recon_norm_csv = os.path.join(base_dir, f"recon_acc_norm_epoch{ep}.csv")
     if os.path.exists(recon_norm_csv):
         norm_acc = np.loadtxt(recon_norm_csv)
@@ -259,4 +258,20 @@ ax.set_title("Normalized Linear Layer Reconstruction Accuracy vs Rank")
 ax.legend()
 ax.grid(True)
 plt.savefig(os.path.join(base_dir, "recon_acc_norm_overlay.png"))
+plt.show()
+
+# --- Overlay raw (non-normalized) reconstruction accuracy curves ---
+fig, ax = plt.subplots(figsize=(10, 6))
+for ep in recon_epochs:
+    # 에폭에 따른 원시 재구성 정확도 파일 불러오기
+    recon_csv = os.path.join(base_dir, f"recon_acc_epoch{ep}.csv")
+    if os.path.exists(recon_csv):
+        raw_acc = np.loadtxt(recon_csv)
+        ax.plot(range(1, len(raw_acc) + 1), raw_acc, label=f"Epoch {ep}")
+ax.set_xlabel("Number of Singular Components (Rank k)")
+ax.set_ylabel("Test Accuracy")
+ax.set_title("Linear Layer Reconstruction Accuracy vs Rank")
+ax.legend()
+ax.grid(True)
+plt.savefig(os.path.join(base_dir, "recon_acc_overlay.png"))
 plt.show()
