@@ -22,7 +22,7 @@ check_and_install_package geoopt
 #DIRS=("runs/alex_seed200_batch64_adam_lr0.0001_epochs100" "runs/alex_seed200_batch64_sgd_lr0.0001_epochs100" "runs/alex_seed200_batch64_sgd_lr0.0001_epochs100_noise100_noiseseed5" "runs/alex_seed200_batch64_adam_lr0.0001_epochs100_noise50.0_noiseseed5" "runs/alex_seed100_batch64_sgd_lr0.0001_epochs100_noise100_noiseseed5" "runs/alex_seed200_batch64_adam_lr0.0001_epochs100_ noise50.0_noiseseed5")
 #DIRS=("runs/alex_seed100_batch64_sgd_lr0.001_epochs100" "runs/alex_seed100_batch64_sgd_lr0.0001_epochs100_noise50.0_noiseseed5")
 #DIRS=("runs/alex_seed100_batch8_sgd_lr0.0001_epochs100")
-DIRS=(runs/*/)
+DIRS=(multiseed_runs/*/)
 
 
 LAYERS=("fc1" "fc2" "fc3")

@@ -54,7 +54,7 @@ def introduce_label_noise(dataset, noise_ratio=0.7, save_path="noisy_labels.npy"
     return noisy_targets
 
 # Choose noise level (e.g., 70% noise)
-noise_ratio = 0.5
+noise_ratio = 0.3
 seed = 5  # Set seed for reproducibility
 save_path = f"./data/noisy_labels{int(noise_ratio * 100)}_seed{int(seed)}.npy"
 
