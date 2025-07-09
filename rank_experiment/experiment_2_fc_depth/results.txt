@@ -1,0 +1,3 @@
+Final Test Accuracy for 3 FC Layers: 0.7255                                                      
+Final Test Accuracy for 4 FC Layers: 0.7051                                                      
+Final Test Accuracy for 5 FC Layers: 0.7070

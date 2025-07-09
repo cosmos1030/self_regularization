@@ -24,7 +24,7 @@ trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
 
 # -- (2) Apply Noisy Labels (Load or Generate) --
-noise_ratio = 0.3  # 노이즈로 바꿀 라벨 비율(예: 0.3 -> 30%)
+noise_ratio = 1  # 노이즈로 바꿀 라벨 비율(예: 0.3 -> 30%)
 noise_seed = 5
 save_path = f"./data/noisy_labels{int(noise_ratio * 100)}_seed{noise_seed}.npy"
 
@@ -92,7 +92,8 @@ criterion = nn.CrossEntropyLoss()
 learning_rate = 0.0001
 optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
 epochs = 100
-accuracy = []
+test_accuracy = []
+train_accuracy = []
 
 # base_dir = os.path.join("runs", f"alex_seed{seed}_batch{batch_size}_sgd_lr{learning_rate}_epochs{epochs}_recon_expt")'
 base_dir = os.path.join("runs", f"alex_seed{seed}_batch{batch_size}_sgd_lr{learning_rate}_epochs{epochs}_noise{noise_ratio*100}_noiseseed{noise_seed}_recon_expt")
@@ -177,7 +178,18 @@ for epoch in range(epochs):
 
     # Epoch 단위 결과 저장(특잇값, 이젠벡터 등)
     model.eval()
+    correct = 0
+    total = 0
+
     with torch.no_grad():
+        for images, labels in trainloader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+        acc = correct / total
+        train_accuracy.append(acc)
         # Conv layer
         conv_layer_index = 1
         for layer in model.features:
@@ -239,7 +251,7 @@ for epoch in range(epochs):
             total += testlabels.size(0)
             correct += (predicted_labels == testlabels.argmax(dim=1)).sum().item()
         acc = correct / total
-        accuracy.append(acc)
+        test_accuracy.append(acc)
 
     print(f'Epoch {epoch+1} finished, test accuracy: {acc:.4f}')
     if total_loss < 0.0001:
@@ -287,14 +299,25 @@ for epoch in range(epochs):
 # ------------------------------
 # 7. Save Training Accuracy Curve
 # ------------------------------
-acc_array = np.array(accuracy)
-np.savetxt(os.path.join(base_dir, "accuracy.csv"), acc_array)
+test_acc_array = np.array(test_accuracy)
+np.savetxt(os.path.join(base_dir, "test_accuracy.csv"), test_acc_array)
 fig, ax = plt.subplots()
-ax.plot(acc_array)
+ax.plot(test_acc_array)
 ax.set_xlabel('Epochs')
 ax.set_ylabel('Accuracy')
-ax.set_title('Training Accuracy Across Epochs')
-fig.savefig(os.path.join(base_dir, 'accuracy.png'))
+ax.set_title('Test Accuracy Across Epochs')
+fig.savefig(os.path.join(base_dir, 'test_accuracy.png'))
+plt.close(fig)
+print('Finished training')
+
+train_acc_array = np.array(train_accuracy)
+np.savetxt(os.path.join(base_dir, "train_accuracy.csv"), train_acc_array)
+fig, ax = plt.subplots()
+ax.plot(train_acc_array)
+ax.set_xlabel('Epochs')
+ax.set_ylabel('Accuracy')
+ax.set_title('Train Accuracy Across Epochs')
+fig.savefig(os.path.join(base_dir, 'train_accuracy.png'))
 plt.close(fig)
 print('Finished training')
 

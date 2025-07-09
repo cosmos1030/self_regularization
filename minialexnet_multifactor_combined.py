@@ -1,323 +1,229 @@
 import torch
-import torchvision
-import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as transforms
+from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 from tqdm import tqdm
+import os
 import shutil
 
 # ------------------------------
-# 1. Data Preparation and Model Definition
+# 1. 환경 설정 및 디렉토리 준비
 # ------------------------------
+print("1. 설정 및 디렉토리 준비 시작")
 
-# Data transformation: convert to tensor and normalize
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
-])
-batch_size = 64
+# GPU/CPU 장치 설정
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-# CIFAR-10 Dataset
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True)
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
-# Define miniAlexNet model
-class miniAlexNet(nn.Module):
-    def __init__(self, num_classes: int = 10) -> None:
-        super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 96, kernel_size=5, stride=3, padding=2),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
-            nn.Conv2d(96, 256, kernel_size=5, stride=3, padding=2),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
-        )
-        # Build classifier: fc1, fc2, fc3
-        # Indices: fc1 -> 0, fc2 -> 2, fc3 -> 4 (ReLU layers interleaved)
-        self.classifier = nn.Sequential(
-            nn.Linear(256 * 4 * 4, 384),   # fc1
-            nn.ReLU(),
-            nn.Linear(384, 192),           # fc2
-            nn.ReLU(),
-            nn.Linear(192, num_classes)    # fc3
-        )
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
-        x = torch.flatten(x, 1)
-        x = self.classifier(x)
-        return x
-
-model = miniAlexNet()
-
-# Set seed for reproducibility
-seed = 100
-torch.manual_seed(seed)
-
-# Loss function and optimizer
-criterion = nn.CrossEntropyLoss()
-learning_rate = 0.0001
-# learning_rate = 3e-5
-optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
-# optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), eps=1e-8)
-
-epochs = 100
-accuracy = []
-
-# ------------------------------
-# 2. Setup Directories for Saving Results
-# ------------------------------
-base_dir = os.path.join("runs", f"alex_seed{seed}_batch{batch_size}_sgd_lr{learning_rate}_epochs{epochs}_recon_expt")
+# 결과 저장을 위한 디렉토리 설정
+base_dir = "runs/resnet18_cifar10_spectrum_analysis"
 if os.path.exists(base_dir):
-    print(f"Directory '{base_dir}' already exists. Removing it...")
+    print(f"기존 디렉토리 '{base_dir}'를 삭제합니다.")
     shutil.rmtree(base_dir)
-os.makedirs(base_dir, exist_ok=True)
-eigenvector_dir = os.path.join(base_dir, 'eigenvectors')
-bias_dir = os.path.join(base_dir, 'biases')
 spectrum_dir = os.path.join(base_dir, 'spectrum')
-os.makedirs(eigenvector_dir, exist_ok=True)
-os.makedirs(bias_dir, exist_ok=True)
 os.makedirs(spectrum_dir, exist_ok=True)
+print(f"결과는 '{base_dir}'에 저장됩니다.")
 
 # ------------------------------
-# 3. Device Setup and Test Function
+# 2. 데이터 준비
 # ------------------------------
-device = torch.device("cuda:4" if torch.cuda.is_available() else "cpu")
-print(f"Utilizing {str(device)}")
-model.to(device)
+print("2. 데이터 준비 시작")
+# CIFAR-10 데이터셋을 위한 전처리
+transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.ToTensor(),
+    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+])
 
-def test_model_accuracy(model, testloader, device):
-    model.eval()
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for images, labels in testloader:
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    return correct / total
+# CIFAR-10 데이터셋 다운로드 및 로더 생성
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2)
 
-# ------------------------------
-# 4. Reconstruction Helper Functions
-# ------------------------------
-
-# Mapping of fc layer indices in the classifier
-fc_indices = {
-    "fc1": 0,
-    "fc2": 2,
-    "fc3": 4
-}
-all_fc_indices = [fc_indices["fc1"], fc_indices["fc2"], fc_indices["fc3"]]
-
-# GPU-based reconstruction: SVD is computed for every call (per k)
-def apply_reconstruction_gpu(weight_cpu: torch.Tensor, k: int, device):
-    weight = weight_cpu.to(device)
-    U, S, Vh = torch.linalg.svd(weight, full_matrices=False)
-    r = min(k, S.shape[0])
-    # Reconstruct with the top r singular components
-    W_recon = U[:, :r] @ torch.diag(S[:r]) @ Vh[:r, :]
-    return W_recon
+testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=False, num_workers=2)
+print("2. 데이터 준비 완료")
 
 # ------------------------------
-# 5. Setup for Reconstruction Experiment
+# 3. 모델 준비
 # ------------------------------
+print("\n3. 모델 준비 시작")
+# ImageNet으로 사전 훈련된 ResNet18 모델 로드
+model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
 
-# Epochs at which to perform reconstruction experiments
-recon_epochs = [25, 50, 75, 100]
-# Only individual fc layer scenarios: fc1, fc2, fc3
-scenarios = {
-    "fc1": fc_indices["fc1"],
-    "fc2": fc_indices["fc2"],
-    "fc3": fc_indices["fc3"]
-}
-# Compute maximum rank for each fc layer (min(out_features, in_features))
-max_rank_dict = {}
-for name, idx in scenarios.items():
-    weight_shape = model.classifier[idx].weight.shape  # (out_features, in_features)
-    max_rank_dict[name] = min(weight_shape[0], weight_shape[1])
-    print(f"{name} maximum rank: {max_rank_dict[name]}")
+# 컨볼루션 레이어들의 가중치 동결
+for param in model.parameters():
+    param.requires_grad = False
+
+# 마지막 FC 레이어를 3개의 새로운 FC 레이어로 교체
+num_ftrs = model.fc.in_features
+model.fc = nn.Sequential(
+    nn.Linear(num_ftrs, 512),
+    nn.ReLU(inplace=True),
+    nn.Linear(512, 256),
+    nn.ReLU(inplace=True),
+    nn.Linear(256, 10)
+)
+
+model = model.to(device)
+print("3. 모델 준비 완료\n")
+print(model.fc)
 
 # ------------------------------
-# 6. Training Loop and Reconstruction Experiment
+# 4. 모델 훈련 및 스펙트럼 분석
 # ------------------------------
+print("\n4. 모델 훈련 및 스펙트럼 분석 시작")
+# 손실 함수 및 옵티마이저 정의
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.fc.parameters(), lr=0.001)
+epochs = 10 # 에포크 수 (필요 시 조정)
+
 for epoch in range(epochs):
     model.train()
-    total_loss = 0.0
-
-    train_pbar = tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs} [Training]", leave=True)
+    running_loss = 0.0
+    train_pbar = tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs} [Training]")
     for i, data in enumerate(train_pbar):
         inputs, labels = data
         inputs, labels = inputs.to(device), labels.to(device)
+
         optimizer.zero_grad()
         outputs = model(inputs)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        total_loss += loss.item()
-        avg_loss = total_loss / (i + 1)
-        train_pbar.set_postfix(loss=f"{avg_loss:.4f}")
+        running_loss += loss.item()
+        train_pbar.set_postfix({'loss': f'{running_loss / (i + 1):.4f}'})
 
-    # Save eigenvectors, biases, and spectrum information for conv and fc layers
+    # --- 에포크 종료 후 평가 및 스펙트럼 분석 ---
     model.eval()
     with torch.no_grad():
-        # Save eigenvectors for convolution layers (optional)
-        conv_layer_index = 1
-        for layer in model.features:
-            if isinstance(layer, nn.Conv2d):
-                weight = layer.weight.detach().cpu().numpy().reshape(layer.out_channels, -1)
-                U, S, Vh = np.linalg.svd(weight)
-                leading_eigenvector = Vh[0, :]
-                with open(os.path.join(eigenvector_dir, f'conv{conv_layer_index}.csv'), 'a') as f:
-                    np.savetxt(f, leading_eigenvector.reshape(1, -1))
-                conv_layer_index += 1
-
-        # Save eigenvectors, biases, and spectrum for fc layers
+        # FC 레이어 스펙트럼 분석 및 저장
         fc_layer_index = 1
-        for layer in model.classifier:
+        for layer in model.fc:
             if isinstance(layer, nn.Linear):
                 weight = layer.weight.detach().cpu().numpy()
-                bias = layer.bias.detach().cpu().numpy()
+                
+                # SVD 및 스펙트럼 계산
                 U, S, Vh = np.linalg.svd(weight, full_matrices=False)
-                leading_eigenvector = Vh[0, :]
-                with open(os.path.join(eigenvector_dir, f'fc{fc_layer_index}.csv'), 'a') as f:
-                    np.savetxt(f, leading_eigenvector.reshape(1, -1))
-                with open(os.path.join(bias_dir, f'fc{fc_layer_index}_bias.csv'), 'a') as f:
-                    np.savetxt(f, bias.reshape(1, -1))
-                n, p = weight.shape
-                spec = np.square(S) / n
-                gamma = p / n
-                sigma2 = np.var(weight)
+                n, p = weight.shape # n: 출력 뉴런 수, p: 입력 뉴런 수
+                spec = np.square(S) / p # 논문에 따라 p로 정규화 (또는 n)
+                
+                # Marchenko-Pastur(MP) 상한 계산
+                gamma = n / p
+                sigma2 = np.var(weight) # 가중치 행렬 원소들의 분산
                 lambda_plus = sigma2 * (1 + np.sqrt(gamma))**2
+                
+                # MP 상한을 넘는 특이값(스파이크) 개수 계산
                 spike_count = np.sum(spec > lambda_plus)
                 
-                fig_spec, ax_spec = plt.subplots(figsize=(8, 5))
-                ax_spec.hist(spec, bins=300, density=True, alpha=0.5, label='Empirical Spectrum')
-                ax_spec.axvline(x=lambda_plus, color='red', linestyle='-', lw=2, label='MP Upper Bound')
-                ax_spec.set_title(f"FC{fc_layer_index} Spectrum at Epoch {epoch+1}")
-                ax_spec.set_xlabel("Normalized Squared Singular Value")
-                ax_spec.set_ylabel("Density")
-                ax_spec.text(0.05, 0.95, f"Spike Count: {spike_count}", transform=ax_spec.transAxes,
-                             fontsize=12, verticalalignment='top',
-                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                # 스펙트럼 시각화 및 저장
+                fig_spec, ax_spec = plt.subplots(figsize=(10, 6))
+                ax_spec.hist(spec, bins=200, density=True, alpha=0.7, label='Empirical Spectrum')
+                ax_spec.axvline(x=lambda_plus, color='r', linestyle='--', lw=2, label=f'MP Upper Bound ($\lambda_+$)')
+                ax_spec.set_title(f"FC{fc_layer_index} Spectrum at Epoch {epoch+1}", fontsize=16)
+                ax_spec.set_xlabel("Normalized Squared Singular Value ($\lambda$)", fontsize=12)
+                ax_spec.set_ylabel("Density", fontsize=12)
+                ax_spec.text(0.65, 0.95, f"Spike Count: {spike_count}", transform=ax_spec.transAxes,
+                            fontsize=12, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
                 ax_spec.legend()
+                ax_spec.grid(True, linestyle='--', alpha=0.6)
+                
                 spec_path = os.path.join(spectrum_dir, f'fc{fc_layer_index}_spectrum_epoch{epoch+1}.png')
                 fig_spec.savefig(spec_path)
                 plt.close(fig_spec)
+                
                 fc_layer_index += 1
-
-        # Test accuracy computation
+        
+        # 테스트 정확도 계산
         correct = 0
         total = 0
-        test_pbar = tqdm(testloader, desc=f"Epoch {epoch+1}/{epochs} [Testing]")
-        for testdata in test_pbar:
-            images, testlabels = testdata
-            images = images.to(device)
-            testlabels = F.one_hot(testlabels, num_classes=10).float().to(device)
-            predictions = model(images)
-            _, predicted_labels = torch.max(predictions.data, 1)
-            total += testlabels.size(0)
-            correct += (predicted_labels == testlabels.argmax(dim=1)).sum().item()
-        acc = correct / total
-        accuracy.append(acc)
-    print(f'Epoch {epoch+1} finished, test accuracy: {acc:.4f}')
-    if total_loss < 0.0001:
-        break
+        for data in testloader:
+            images, labels = data
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+        acc = 100 * correct / total
+        print(f"Epoch {epoch+1}/{epochs} 완료. Test Accuracy: {acc:.2f}%")
 
-    # ------------------------------
-    # Reconstruction Experiment
-    # ------------------------------
-    if (epoch+1) in recon_epochs:
-        print(f"Performing reconstruction experiments at epoch {epoch+1}")
-        # Save original fc layer weights (stored on CPU)
-        saved_weights_all = {idx: model.classifier[idx].weight.data.clone().cpu() for idx in all_fc_indices}
-        scenario_results = {}  # To store reconstruction accuracy per scenario
-        
-        # Iterate through each scenario (each fc layer individually)
-        for scenario_name, fc_idx in scenarios.items():
-            max_rank_current = max_rank_dict[scenario_name]
-            # max_rank_current = 5
-            scenario_results[scenario_name] = []
-            
-            # Loop over different k values from 1 to maximum rank for this layer
-            for k in tqdm(range(1, max_rank_current + 1), desc=f"Reconstructing {scenario_name}", leave=False):
-                # Compute SVD each time for the current k value
-                W_recon = apply_reconstruction_gpu(saved_weights_all[fc_idx], k, device)
-                # Assign reconstructed weights for current fc layer
-                model.classifier[fc_idx].weight.data = W_recon
-                # Restore original weights for the other fc layers
-                for other_idx in all_fc_indices:
-                    if other_idx != fc_idx:
-                        model.classifier[other_idx].weight.data = saved_weights_all[other_idx].to(device)
-                # Measure test accuracy after reconstruction
-                acc_recon = test_model_accuracy(model, testloader, device)
-                scenario_results[scenario_name].append(acc_recon)
-            
-            # Normalize reconstruction accuracy relative to the maximum rank result
-            norm_recon_acc = np.array(scenario_results[scenario_name])
-            baseline = norm_recon_acc[-1]
-            if baseline > 0:
-                norm_recon_acc = norm_recon_acc / baseline
-            # Save CSV files for reconstruction results
-            np.savetxt(os.path.join(base_dir, f"recon_{scenario_name}_acc_epoch{epoch+1}.csv"), scenario_results[scenario_name])
-            np.savetxt(os.path.join(base_dir, f"recon_{scenario_name}_acc_norm_epoch{epoch+1}.csv"), norm_recon_acc)
-            print(f"Reconstruction results saved for scenario '{scenario_name}' at epoch {epoch+1}")
-
-# Save training accuracy curve
-acc_array = np.array(accuracy)
-np.savetxt(os.path.join(base_dir, "accuracy.csv"), acc_array)
-fig, ax = plt.subplots()
-ax.plot(acc_array)
-ax.set_xlabel('Epochs')
-ax.set_ylabel('Accuracy')
-ax.set_title('Training Accuracy Across Epochs')
-fig.savefig(os.path.join(base_dir, 'accuracy.png'))
-plt.close(fig)
-print('Finished training')
+print("4. 모델 훈련 및 스펙트럼 분석 완료")
+model_path = os.path.join(base_dir, "resnet18_finetuned.pth")
+torch.save(model.state_dict(), model_path)
+print(f"훈련된 모델을 '{model_path}'에 저장했습니다.")
 
 # ------------------------------
-# 7. Plot Overlay Graphs for Reconstruction Results
+# 5. SVD 재구성 및 평가 (마지막에서 두 번째 FC 레이어)
 # ------------------------------
-for scenario_name in scenarios.keys():
-    # Overlay normalized graphs
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for epoch_val in recon_epochs:
-        csv_file = os.path.join(base_dir, f"recon_{scenario_name}_acc_norm_epoch{epoch_val}.csv")
-        if os.path.exists(csv_file):
-            norm_acc = np.loadtxt(csv_file)
-            ax.plot(range(1, len(norm_acc) + 1), norm_acc, label=f"Epoch {epoch_val}")
-    ax.set_xlabel("Number of Singular Components (Rank k)")
-    ax.set_ylabel("Normalized Test Accuracy")
-    ax.set_title(f"Normalized Reconstruction Accuracy vs Rank ({scenario_name})")
-    ax.legend()
-    ax.grid(True)
-    norm_fig_path = os.path.join(base_dir, f"recon_{scenario_name}_acc_norm_overlay.png")
-    plt.savefig(norm_fig_path)
-    plt.close(fig)
-    print(f"Saved normalized overlay graph for scenario '{scenario_name}' at: {norm_fig_path}")
+print("\n5. SVD 재구성 및 평가 시작")
 
-    # Overlay raw (unnormalized) graphs
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for epoch_val in recon_epochs:
-        csv_file = os.path.join(base_dir, f"recon_{scenario_name}_acc_epoch{epoch_val}.csv")
-        if os.path.exists(csv_file):
-            raw_acc = np.loadtxt(csv_file)
-            ax.plot(range(1, len(raw_acc) + 1), raw_acc, label=f"Epoch {epoch_val}")
-    ax.set_xlabel("Number of Singular Components (Rank k)")
-    ax.set_ylabel("Test Accuracy")
-    ax.set_title(f"Reconstruction Accuracy vs Rank ({scenario_name})")
-    ax.legend()
-    ax.grid(True)
-    raw_fig_path = os.path.join(base_dir, f"recon_{scenario_name}_acc_overlay.png")
-    plt.savefig(raw_fig_path)
-    plt.close(fig)
-    print(f"Saved raw overlay graph for scenario '{scenario_name}' at: {raw_fig_path}")
+# 평가 함수
+def evaluate_model(model, dataloader, device):
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for data in dataloader:
+            images, labels = data
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    return 100 * correct / total
+
+# 분석 대상 레이어: 마지막에서 두 번째 FC 레이어 (model.fc의 2번 인덱스)
+target_layer = model.fc[2]
+original_weights = target_layer.weight.data.clone()
+W = original_weights.cpu().numpy()
+
+# SVD 수행
+print("마지막에서 두 번째 FC 레이어 가중치에 대해 SVD를 수행합니다...")
+U, S, Vh = np.linalg.svd(W, full_matrices=False)
+print(f"SVD 완료. 가중치 행렬 크기: {W.shape}, 특이값 개수: {len(S)}")
+
+# 랭크(k) 개수별로 재구성 및 정확도 측정
+accuracies = []
+max_rank = len(S)
+ranks = list(range(1, max_rank + 1))
+
+pbar_svd = tqdm(ranks, desc="SVD 재구성 및 평가 중")
+for k in pbar_svd:
+    S_k = np.diag(S[:k])
+    W_recon = np.dot(U[:, :k], np.dot(S_k, Vh[:k, :]))
+    W_recon_tensor = torch.from_numpy(W_recon).float().to(device)
+    target_layer.weight.data = W_recon_tensor
+
+    acc = evaluate_model(model, testloader, device)
+    accuracies.append(acc)
+    pbar_svd.set_postfix({'Rank': k, 'Accuracy': f'{acc:.2f}%'})
+
+target_layer.weight.data = original_weights.to(device)
+print("5. SVD 재구성 및 평가 완료")
+
+
+# ------------------------------
+# 6. 결과 시각화
+# ------------------------------
+print("\n6. 재구성 결과 시각화")
+plt.style.use('seaborn-v0_8-whitegrid')
+fig, ax = plt.subplots(figsize=(12, 7))
+
+ax.plot(ranks, accuracies, marker='o', linestyle='-', color='b', markersize=4)
+ax.set_title('Model Accuracy vs. Number of Singular Values for Reconstruction (FC2)', fontsize=16)
+ax.set_xlabel('Number of Singular Values (Rank k)', fontsize=12)
+ax.set_ylabel('Test Accuracy (%)', fontsize=12)
+
+full_rank_accuracy = evaluate_model(model, testloader, device)
+ax.axhline(y=full_rank_accuracy, color='r', linestyle='--', label=f'Full Rank Accuracy ({full_rank_accuracy:.2f}%)')
+ax.legend()
+ax.grid(True)
+plt.tight_layout()
+
+recon_fig_path = os.path.join(base_dir, "svd_reconstruction_accuracy.png")
+plt.savefig(recon_fig_path)
+print(f"재구성 결과 그래프를 '{recon_fig_path}' 파일로 저장했습니다.")
+plt.show()

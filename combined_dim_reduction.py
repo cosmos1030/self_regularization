@@ -21,6 +21,9 @@ import geomstats.backend as gs
 import geoopt
 from geoopt import ManifoldParameter
 from geoopt.manifolds import Stiefel
+import os
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '9'
 
 # 시드 고정 (재현성)
 torch.manual_seed(42)

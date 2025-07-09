@@ -3,3 +3,6 @@ run*/
 *runs*/
 *output*/
 archive/
+private/
+*.pyc
+*.json
